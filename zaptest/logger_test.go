@@ -28,12 +28,16 @@ import (
 	"testing"
 
 	"go.uber.org/zap"
+	"go.uber.org/zap/internal/ztest"
+	"go.uber.org/zap/zapcore"
 
 	"github.com/stretchr/testify/assert"
 )
 
 func TestTestLogger(t *testing.T) {
 	ts := newTestLogSpy(t)
+	defer ts.AssertFailed(false)
+
 	log := NewLogger(ts)
 
 	log.Info("received work order")
@@ -56,6 +60,8 @@ func TestTestLogger(t *testing.T) {
 
 func TestTestLoggerSupportsLevels(t *testing.T) {
 	ts := newTestLogSpy(t)
+	defer ts.AssertFailed(false)
+
 	log := NewLogger(ts, Level(zap.WarnLevel))
 
 	log.Info("received work order")
@@ -74,16 +80,59 @@ func TestTestLoggerSupportsLevels(t *testing.T) {
 	)
 }
 
+func TestTestLoggerErrorOutput(t *testing.T) {
+	// This test verifies that the test logger logs internal messages to the
+	// testing.T and marks the test as failed.
+
+	ts := newTestLogSpy(t)
+	log := NewLogger(ts)
+
+	// Replace with a core that fails.
+	log = log.WithOptions(zap.WrapCore(func(zapcore.Core) zapcore.Core {
+		return zapcore.NewCore(
+			zapcore.NewConsoleEncoder(zap.NewDevelopmentEncoderConfig()),
+			zapcore.Lock(zapcore.AddSync(ztest.FailWriter{})),
+			zapcore.DebugLevel,
+		)
+	}))
+
+	log.Info("foo") // this fails
+
+	ts.AssertFailed(true)
+	if assert.Len(t, ts.Messages, 1, "expected a log message") {
+		assert.Regexp(t, `write error: failed`, ts.Messages[0])
+	}
+}
+
 // testLogSpy is a testing.TB that captures logged messages.
 type testLogSpy struct {
 	testing.TB
 
-	mu       sync.Mutex
+	mu       sync.RWMutex
+	failed   bool
 	Messages []string
 }
 
 func newTestLogSpy(t testing.TB) *testLogSpy {
 	return &testLogSpy{TB: t}
+}
+
+func (t *testLogSpy) Fail() {
+	t.mu.Lock()
+	t.failed = true
+	t.mu.Unlock()
+}
+
+func (t *testLogSpy) Failed() bool {
+	t.mu.RLock()
+	failed := t.failed
+	t.mu.RUnlock()
+	return failed
+}
+
+func (t *testLogSpy) FailNow() {
+	t.Fail()
+	t.TB.FailNow()
 }
 
 func (t *testLogSpy) Logf(format string, args ...interface{}) {
@@ -96,7 +145,6 @@ func (t *testLogSpy) Logf(format string, args ...interface{}) {
 	m := fmt.Sprintf(format, args...)
 	m = m[strings.IndexByte(m, '\t')+1:]
 
-	// t.Log should be thread-safe.
 	t.mu.Lock()
 	t.Messages = append(t.Messages, m)
 	t.mu.Unlock()
@@ -105,5 +153,9 @@ func (t *testLogSpy) Logf(format string, args ...interface{}) {
 }
 
 func (t *testLogSpy) AssertMessages(msgs ...string) {
-	assert.Equal(t, msgs, t.Messages)
+	assert.Equal(t.TB, msgs, t.Messages, "logged messages did not match")
+}
+
+func (t *testLogSpy) AssertFailed(v bool) {
+	assert.Equal(t.TB, v, t.failed, "test status did not match")
 }
