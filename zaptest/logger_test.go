@@ -36,7 +36,7 @@ import (
 
 func TestTestLogger(t *testing.T) {
 	ts := newTestLogSpy(t)
-	defer ts.AssertFailed(false)
+	defer ts.AssertPassed()
 
 	log := NewLogger(ts)
 
@@ -60,7 +60,7 @@ func TestTestLogger(t *testing.T) {
 
 func TestTestLoggerSupportsLevels(t *testing.T) {
 	ts := newTestLogSpy(t)
-	defer ts.AssertFailed(false)
+	defer ts.AssertPassed()
 
 	log := NewLogger(ts, Level(zap.WarnLevel))
 
@@ -85,6 +85,8 @@ func TestTestLoggerErrorOutput(t *testing.T) {
 	// testing.T and marks the test as failed.
 
 	ts := newTestLogSpy(t)
+	defer ts.AssertFailed()
+
 	log := NewLogger(ts)
 
 	// Replace with a core that fails.
@@ -98,7 +100,6 @@ func TestTestLoggerErrorOutput(t *testing.T) {
 
 	log.Info("foo") // this fails
 
-	ts.AssertFailed(true)
 	if assert.Len(t, ts.Messages, 1, "expected a log message") {
 		assert.Regexp(t, `write error: failed`, ts.Messages[0])
 	}
@@ -156,6 +157,14 @@ func (t *testLogSpy) AssertMessages(msgs ...string) {
 	assert.Equal(t.TB, msgs, t.Messages, "logged messages did not match")
 }
 
-func (t *testLogSpy) AssertFailed(v bool) {
-	assert.Equal(t.TB, v, t.failed, "test status did not match")
+func (t *testLogSpy) AssertPassed() {
+	t.assertFailed(false, "expected test to pass")
+}
+
+func (t *testLogSpy) AssertFailed() {
+	t.assertFailed(true, "expected test to fail")
+}
+
+func (t *testLogSpy) assertFailed(v bool, msg string) {
+	assert.Equal(t.TB, v, t.failed, msg)
 }
